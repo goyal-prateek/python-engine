@@ -1,5 +1,6 @@
 from aiobotocore.session import get_session
-from apps.www.core.config import config
+
+from common.core.config import config
 
 
 class AsyncS3Client:

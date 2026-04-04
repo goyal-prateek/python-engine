@@ -1,0 +1,17 @@
+[project]
+name = "python-engine"
+version = "0.1.0"
+description = "Monorepo workspace: shared common library and separately deployable apps"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "mypy==1.15.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["common", "apps/www"]

@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from common.core.config import config
+from apps.www.core.config import config
 
 router = APIRouter(
     prefix=config.SERVICE_ROUTE_PREFIX + "/system",

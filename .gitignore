@@ -3,6 +3,7 @@
 
 # virtual env
 .engine-venv
+.venv
 
 # pycache
 **/__pycache__
@@ -10,3 +11,8 @@
 # vscode settings
 .vscode
 .vercel
+
+# Private dev journal at repo root only (AI + human notes; not committed)
+/dev-journal/
+AGENTS.md
+.cursor
