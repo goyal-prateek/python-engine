@@ -1,25 +1,29 @@
-from typing import AsyncGenerator, Tuple
 import uuid
+from collections.abc import AsyncGenerator
+from typing import Literal
+
 from apps.www.app.models.api.requests.story import GenerateStoryRequest
+from common.app.modules.llm.clients import SharedLLMClients
 from common.app.modules.llm.functions.story.generate.llm_component import (
     generate_story_llm_component,
 )
 from common.app.modules.llm.functions.story.models import (
-    GenerateStoryOutputModel,
     GenerateStoryParamsModel,
 )
 from common.app.modules.tts.providers import TTSProvider
 from common.app.modules.tts.providers.base import TTSBaseProvider
 from common.app.modules.tts.providers.smallest_ai import SmallestAITTSProvider
 from common.core.s3 import async_s3_client
-from common.core.config import config
+
 
 class StoryService:
     @classmethod
     async def generate_story(
         cls,
         data: GenerateStoryRequest,
-    ) -> Tuple[str, str]:
+        *,
+        shared_llm_clients: SharedLLMClients,
+    ) -> tuple[str, str]:
         story_text = ""
         llm_execution = await generate_story_llm_component.run(
             params=GenerateStoryParamsModel(
@@ -30,17 +34,18 @@ class StoryService:
                 story_idea=data.story_idea,
                 tone=data.tone,
             ),
+            shared_llm_clients=shared_llm_clients,
         )
         assert isinstance(llm_execution, AsyncGenerator)
         async for chunk in llm_execution:
             story_text += chunk
 
-        voice_name = "emily"
-        voice_language_code = "en"
-
         if data.language == "hindi":
             voice_name = "irisha"
-            voice_language_code = "hi"
+            voice_language_code: Literal["en", "hi", "ta", "fr", "de", "pl"] = "hi"
+        else:
+            voice_name = "emily"
+            voice_language_code = "en"
 
         audio_content = await TTSProvider.generate_audio(
             text=story_text,
@@ -66,7 +71,12 @@ class StoryService:
         return (story_text, url)
 
     @classmethod
-    async def generate_story_sse(cls, data: GenerateStoryRequest) -> AsyncGenerator[Tuple[str, str], None]:
+    async def generate_story_sse(
+        cls,
+        data: GenerateStoryRequest,
+        *,
+        shared_llm_clients: SharedLLMClients,
+    ) -> AsyncGenerator[tuple[str, str], None]:
         story_text = ""
         llm_execution = await generate_story_llm_component.run(
             params=GenerateStoryParamsModel(
@@ -77,6 +87,7 @@ class StoryService:
                 story_idea=data.story_idea,
                 tone=data.tone,
             ),
+            shared_llm_clients=shared_llm_clients,
         )
         assert isinstance(llm_execution, AsyncGenerator)
         line_to_send, generated_story = "", ""
@@ -86,17 +97,17 @@ class StoryService:
             if "\n" in generated_story:
                 line_to_send, generated_story = generated_story.split("\n", 1)
                 yield ("story_text_append", line_to_send)
-            
+
         for line_to_send in generated_story.split("\n"):
             yield ("story_text_append", line_to_send)
 
-        voice_name = "emily"
-        voice_language_code = "en"
-
         if data.language == "hindi":
             voice_name = "irisha"
-            voice_language_code = "hi"
-        
+            voice_language_code: Literal["en", "hi", "ta", "fr", "de", "pl"] = "hi"
+        else:
+            voice_name = "emily"
+            voice_language_code = "en"
+
         audio_content = await TTSProvider.generate_audio(
             text=story_text,
             voice=SmallestAITTSProvider.TTSVoice(

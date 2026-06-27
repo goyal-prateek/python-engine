@@ -1,6 +1,12 @@
-from fastapi import APIRouter
+import logging
 
-from common.core.config import config
+from fastapi import APIRouter, HTTPException, Request
+
+from apps.www.core.config import config
+from common.app.modules.db.mongo import MongoPersistentStoreHealth
+from common.core.db.mongo import MongoApp
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix=config.SERVICE_ROUTE_PREFIX + "/system",
@@ -8,5 +14,18 @@ router = APIRouter(
 
 
 @router.get("/health/")
-async def health():
-    return {"status": "ok"}
+async def health(request: Request):
+    mongo: MongoApp | None = getattr(request.app.state, "mongo", None)
+    if mongo is None:
+        return {"status": "ok", "mongo": "disabled"}
+
+    try:
+        await MongoPersistentStoreHealth(mongo).check_reachable()
+    except Exception as exc:
+        logger.warning("Mongo health check failed: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "degraded", "mongo": "unreachable"},
+        ) from exc
+
+    return {"status": "ok", "mongo": "ok"}

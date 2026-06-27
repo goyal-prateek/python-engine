@@ -1,26 +1,36 @@
-import os
-import sys
-from apps.www.core.config import config as www_config
+"""Active service settings for `common` modules.
 
-basename = os.path.basename(sys.argv[0])
-print(basename)
+The host app (e.g. `apps.www`) must call `configure()` with a `CommonServiceSettings`
+instance (usually a subclass with app-specific fields). Until then, readers fall back
+to `common_settings_from_env()` so standalone scripts keep working.
+"""
 
-# if (
-#     basename == "run_www.py"
-# ):
-#     from apps.www.core.config import config as www_config
-# else:
-#     raise Exception(
-#         f"""Unknown basename: {basename} or sys.argv: {sys.argv}
-#     This occurs when common/core/config.py is was executed in a non-expected way.
-#     Allowed ways:
-#     Run run_www.py
-#     """
-#     )
+from __future__ import annotations
+
+from common.core.common_settings import CommonServiceSettings, common_settings_from_env
+
+_active: CommonServiceSettings | None = None
 
 
-def get_config():
-    return www_config
+def configure(settings: CommonServiceSettings) -> None:
+    """Register the process-wide settings object (typically the app config instance)."""
+    global _active
+    _active = settings
 
 
-config = get_config()
+def get_common_settings() -> CommonServiceSettings:
+    if _active is not None:
+        return _active
+    return common_settings_from_env()
+
+
+class _CommonSettingsProxy:
+    __slots__ = ()
+
+    def __getattr__(self, name: str):
+        return getattr(get_common_settings(), name)
+
+
+config = _CommonSettingsProxy()
+
+__all__ = ["CommonServiceSettings", "configure", "config", "get_common_settings"]

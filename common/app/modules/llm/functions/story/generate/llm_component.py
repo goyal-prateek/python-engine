@@ -1,4 +1,5 @@
-from typing import Any, Dict, List
+from typing import Any
+
 from common.app.modules.llm.functions import LLMFunction
 from common.app.modules.llm.functions.story.models import (
     GenerateStoryOutputModel,
@@ -7,13 +8,13 @@ from common.app.modules.llm.functions.story.models import (
 from common.app.modules.llm.promtps import LLMPromptItem
 
 
-def generate_story_transfrom_params(params: GenerateStoryParamsModel) -> Dict[str, Any]:
+def generate_story_transfrom_params(params: GenerateStoryParamsModel) -> dict[str, Any]:
     return {}
 
 
 def extend_prompt(
-    step_input: Dict[str, Any], params: LLMFunction.ParamsModel
-) -> List[LLMPromptItem]:
+    step_input: dict[str, Any], params: LLMFunction.ParamsModel
+) -> list[LLMPromptItem]:
     assert isinstance(params, GenerateStoryParamsModel)
 
     return [
@@ -27,8 +28,6 @@ def extend_prompt(
     """,
         ),
     ]
-
-
 
 
 generate_story_llm_component = LLMFunction(

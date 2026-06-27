@@ -1,54 +1,62 @@
+"""www application config: shared service fields + www-only settings."""
+
+from __future__ import annotations
+
 import os
-import sys
-from typing import Dict, Optional
+from dataclasses import asdict, dataclass
 
-from dotenv import load_dotenv, find_dotenv
-
-env_path = find_dotenv()
-if env_path and env_path != "":
-    load_dotenv()
+from common.core.common_settings import CommonServiceSettings, common_settings_from_env
+from common.core.config import configure
 
 
-class Config:
+@dataclass
+class WwwLocalConfig(CommonServiceSettings):
     SERVICE_ROUTE_PREFIX: str = "/www"
     PORT: int = 8000
-    HOT_RELOAD = ...
-    ENVIRONMENT = ...
-    OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
-    OPENROUTER_API_KEY: Optional[str] = os.getenv("OPENROUTER_API_KEY")
-    GOOGLE_API_KEY: Optional[str] = os.getenv("GOOGLE_API_KEY")
-    GOOGLE_PROJECT_ID: Optional[str] = os.getenv("GOOGLE_PROJECT_ID")
-    AWS_REGION: str = "ap-south-1"
-    AWS_ACCESS_KEY: Optional[str] = os.getenv("AWS_ACCESS_KEY")
-    AWS_SECRET_ACCESS_KEY: Optional[str] = os.getenv("AWS_SECRET_ACCESS_KEY")
-    SMALLEST_AI_API_KEY: Optional[str] = os.getenv("SMALLEST_AI_API_KEY")
-
-
-class LocalConfig(Config):
-    ENVIRONMENT: str = "local"
     HOT_RELOAD: bool = True
+    ENVIRONMENT: str = "local"
 
 
-class DevelopmentConfig(Config):
+@dataclass
+class WwwDevelopmentConfig(CommonServiceSettings):
+    SERVICE_ROUTE_PREFIX: str = "/www"
+    PORT: int = 8000
+    HOT_RELOAD: bool = False
     ENVIRONMENT: str = "development"
+
+
+@dataclass
+class WwwProductionConfig(CommonServiceSettings):
+    SERVICE_ROUTE_PREFIX: str = "/www"
+    PORT: int = 8000
     HOT_RELOAD: bool = False
-
-
-class ProductionConfig(Config):
     ENVIRONMENT: str = "production"
-    HOT_RELOAD: bool = False
 
 
-def get_config():
+def get_config() -> WwwLocalConfig | WwwDevelopmentConfig | WwwProductionConfig:
+    base = common_settings_from_env()
     env = str(os.getenv("ENVIRONMENT", "local"))
     if "local" in env:
         env = "local"
-    config_type: Dict[str, Config] = {
-        "local": LocalConfig(),
-        "development": DevelopmentConfig(),
-        "production": ProductionConfig(),
+    mapping: dict[str, type[WwwLocalConfig | WwwDevelopmentConfig | WwwProductionConfig]] = {
+        "local": WwwLocalConfig,
+        "development": WwwDevelopmentConfig,
+        "production": WwwProductionConfig,
     }
-    return config_type[env]
+    cls = mapping[env]
+    return cls(**asdict(base))
 
 
 config = get_config()
+configure(config)
+
+Config = WwwLocalConfig | WwwDevelopmentConfig | WwwProductionConfig
+
+__all__ = [
+    "Config",
+    "WwwDevelopmentConfig",
+    "WwwLocalConfig",
+    "WwwProductionConfig",
+    "config",
+    "get_config",
+]

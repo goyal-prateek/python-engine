@@ -1,12 +1,23 @@
-# dotenv
+# Secrets & local env
 .env
 
-# virtual env
-.engine-venv
+# Python
+**/__pycache__/
+.mypy_cache/
+.pyright/
 
-# pycache
-**/__pycache__
+# Virtual environment
+.engine-venv/
 
-# vscode settings
-.vscode
-.vercel
+# Linters / formatters
+.ruff_cache/
+
+# IDE & local tooling
+.vscode/
+.cursor/
+
+# Deploy / hosting
+.vercel/
+
+# Private dev journal (repo root only)
+/dev-journal/

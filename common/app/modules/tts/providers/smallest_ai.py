@@ -1,10 +1,10 @@
-from smallestai.waves import AsyncWavesClient
-from smallestai.waves.utils import chunk_text, add_wav_header
+from collections.abc import AsyncIterator
+from typing import Literal
 
-from typing import AsyncIterator, List, Literal, Optional
-from common.app.modules.tts.providers.base import TTSBaseProvider
 import aiohttp
+from smallestai.waves.utils import add_wav_header, chunk_text
 
+from common.app.modules.tts.providers.base import TTSBaseProvider
 
 
 class SmallestAITTSProvider(TTSBaseProvider):
@@ -66,9 +66,7 @@ class SmallestAITTSProvider(TTSBaseProvider):
                     "Content-Type": "application/json",
                 }
 
-                async with session.post(
-                    url=url, json=payload, headers=headers
-                ) as res:
+                async with session.post(url=url, json=payload, headers=headers) as res:
                     if res.status != 200:
                         raise Exception(
                             f"Failed to synthesize speech: {await res.text()}. For more information, visit https://waves.smallest.ai/"
@@ -87,5 +85,5 @@ class SmallestAITTSProvider(TTSBaseProvider):
             audio_content.extend(chunk)
 
         sample_rate = audio_config.sample_rate or 24000
-        
-        return add_wav_header(audio_content, sample_rate=sample_rate)
+
+        return add_wav_header(bytes(audio_content), sample_rate=sample_rate)

@@ -1,0 +1,60 @@
+[project]
+name = "python-engine"
+version = "0.1.0"
+description = "Monorepo workspace: shared common library and separately deployable apps"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pre-commit==4.5.1",
+    "pyright==1.1.408",
+    "ruff==0.15.9",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["common", "apps", "."]
+extend-exclude = [".venv", ".engine-venv"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501", # line length (formatter handles wrapping where it chooses)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["common", "apps"]
+
+[tool.ruff.lint.per-file-ignores]
+# Optional hook methods on ABC: default no-op implementations for subclasses.
+"common/app/modules/agents/protocol.py" = ["B027"]
+
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = true
+
+[tool.pyright]
+pythonVersion = "3.11"
+venvPath = "."
+venv = ".engine-venv"
+include = ["common", "apps", "run_www.py"]
+exclude = [".venv", "**/__pycache__", ".engine-venv"]
+typeCheckingMode = "basic"
+# Editable `common` + PYTHONPATH-style `apps.www` (repo root on path in dev).
+extraPaths = ["."]
+
+[tool.uv.workspace]
+members = ["common", "apps/www"]
