@@ -1,4 +1,9 @@
-"""Named sub-agents with isolated histories sharing the same protocol and backend."""
+"""Named sub-agents with isolated histories sharing the same protocol and backend.
+
+``SPAWN_REGISTRY`` is process-global and keyed by ``session_id``; it is **not** shared
+across worker processes. Call :func:`clear_spawns_for_session` (or ``clear_session`` from
+``common.app.modules.agents``) when a session ends to release spawned agents.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +15,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from common.app.modules.agents.agent import Agent
+from common.app.modules.agents.builtin_prompts import builtin_tool_names
 from common.app.modules.agents.subagent_config import SubagentConfig
 from common.app.modules.agents.tools.base import Tool, ToolResult
 
@@ -35,7 +41,14 @@ async def get_or_create_spawn(parent: Agent, spawn_name: str) -> Agent:
         )
     cfg: SubagentConfig = parent.subagents[spawn_name]
     system = cfg.system if cfg.system is not None else parent.system
-    tools = list(cfg.tools) if cfg.tools is not None else list(parent.tools)
+    if cfg.tools is not None:
+        tools = list(cfg.tools)
+    else:
+        # Inherited parent tools include built-in delegation/HITL tools that close over the
+        # parent (session_id/name). Strip them so the child does not act as its parent;
+        # the child can be given its own built-ins explicitly via cfg.tools.
+        known_builtins = builtin_tool_names()
+        tools = [t for t in parent.tools if t.name not in known_builtins]
     model_cfg = (
         cfg.agent_model_config
         if cfg.agent_model_config is not None
@@ -103,18 +116,14 @@ async def make_agent_spawnable(agent: Agent) -> list[Tool[Any]]:
             super().__init__(name=base.name, input_model=im)
 
         async def execute(self, input: SpawnableAgentToolInput) -> str | ToolResult:
-            from common.app.modules.agents.subagent_runs import is_spawn_busy
+            from common.app.modules.agents.subagent_runs import spawn_busy_guard
 
-            if is_spawn_busy(base.session_id, base.name, input.spawn_name):
-                return ToolResult(
-                    content=(
-                        "Error: this spawn already has an async run in progress "
-                        "(delegate_to_subagent). Use wait_for_* or list_subagent_runs first."
-                    ),
-                    is_error=True,
-                )
-            spawn = await get_or_create_spawn(base, input.spawn_name)
-            blocks = await spawn.run_async(input.agent_input)
+            try:
+                async with spawn_busy_guard(base.session_id, base.name, input.spawn_name):
+                    spawn = await get_or_create_spawn(base, input.spawn_name)
+                    blocks = await spawn.run_async(input.agent_input)
+            except ValueError as e:
+                return ToolResult(content=str(e), is_error=True)
             return json.dumps([b.model_dump(exclude_none=True) for b in blocks])
 
     class SpawnInfoTool(Tool[SpawnInfoInput]):

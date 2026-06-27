@@ -1,4 +1,10 @@
-"""Track async subagent delegations (tasks, outcomes) per parent agent."""
+"""Track async subagent delegations (tasks, outcomes) per parent agent.
+
+State here is process-global and keyed by ``session_id``; it is **not** shared across
+multiple worker processes. Finished run records are bounded per parent (see
+``_MAX_FINISHED_RUNS_PER_PARENT``); call :func:`clear_subagent_runs_for_session` (or
+``clear_session`` from ``common.app.modules.agents``) when a session ends to release state.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +13,8 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -18,6 +26,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 RunState = Literal["running", "completed", "failed", "cancelled"]
+
+# Cap retained finished (completed/failed/cancelled) run records per parent so a
+# long-lived session does not grow the registry without bound.
+_MAX_FINISHED_RUNS_PER_PARENT = 50
 
 
 def _preview_from_blocks(blocks: list[Any], max_len: int = 400) -> str:
@@ -56,6 +68,24 @@ _running_spawn_keys: set[SpawnKey] = set()
 
 def _parent_key(session_id: str, parent_name: str) -> tuple[str, str]:
     return (session_id, parent_name)
+
+
+def _prune_finished_for_parent(pk: tuple[str, str]) -> None:
+    """Drop oldest finished run records for a parent beyond the retention cap.
+
+    Caller must hold ``_registry_lock``. Running records are always kept.
+    """
+    ids = _parent_run_ids.get(pk)
+    if not ids:
+        return
+    finished = [did for did in ids if (r := _runs.get(did)) is not None and r.task.done()]
+    excess = len(finished) - _MAX_FINISHED_RUNS_PER_PARENT
+    if excess <= 0:
+        return
+    for did in finished[:excess]:
+        _runs.pop(did, None)
+    keep = [did for did in ids if did in _runs]
+    _parent_run_ids[pk] = keep
 
 
 def _finalize_run_record(rec: SubagentRunRecord, t: asyncio.Task[list[Any]]) -> None:
@@ -109,6 +139,7 @@ async def start_delegation(parent: Agent, spawn_name: str, agent_input: str) -> 
         _runs[delegation_id] = rec
         pk = _parent_key(parent.session_id, parent.name)
         _parent_run_ids.setdefault(pk, []).append(delegation_id)
+        _prune_finished_for_parent(pk)
 
         def _on_done(t: asyncio.Task[list[Any]]) -> None:
             r = _runs.get(delegation_id)
@@ -260,6 +291,33 @@ def is_spawn_busy(session_id: str, parent_name: str, spawn_name: str) -> bool:
     return (session_id, parent_name, spawn_name) in _running_spawn_keys
 
 
+@asynccontextmanager
+async def spawn_busy_guard(
+    session_id: str,
+    parent_name: str,
+    spawn_name: str,
+) -> AsyncIterator[None]:
+    """Atomically claim a spawn for a synchronous run; release on exit.
+
+    Shares ``_running_spawn_keys`` with :func:`start_delegation` so a sync run and an
+    async delegation (or two sync runs) for the same spawn cannot execute concurrently
+    against the spawn's shared history. Raises ``ValueError`` if already busy.
+    """
+    spawn_key: SpawnKey = (session_id, parent_name, spawn_name)
+    async with _registry_lock:
+        if spawn_key in _running_spawn_keys:
+            raise ValueError(
+                f"Subagent spawn {spawn_name!r} already has a run in progress for this parent. "
+                "Wait for it to finish before running it again."
+            )
+        _running_spawn_keys.add(spawn_key)
+    try:
+        yield
+    finally:
+        async with _registry_lock:
+            _running_spawn_keys.discard(spawn_key)
+
+
 def clear_subagent_runs_for_session(session_id: str) -> int:
     """Remove run records for a session. Does not cancel tasks. Returns removed count."""
     to_del: list[str] = []
@@ -282,6 +340,7 @@ __all__ = [
     "clear_subagent_runs_for_session",
     "is_spawn_busy",
     "list_runs_for_parent",
+    "spawn_busy_guard",
     "start_delegation",
     "wait_all",
     "wait_any",

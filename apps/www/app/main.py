@@ -38,7 +38,9 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    # Credentials cannot be combined with a wildcard origin (browsers reject it and the
+    # spec disallows it). Keep this False until origins are an explicit allowlist.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

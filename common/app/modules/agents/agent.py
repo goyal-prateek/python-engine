@@ -88,6 +88,7 @@ class Agent:
             self.enabled_builtin_tools = None
         self._turn_last_stop_reason = ""
         self._bootstrapped = False
+        self._notification_tasks: set[asyncio.Task[None]] = set()
         self.history = MessageHistory(
             context_window_tokens=self.model_config.context_window_tokens,
             session_id=session_id,
@@ -133,7 +134,19 @@ class Agent:
         return "|".join(parts)
 
     def _send_notification(self, update: MessageParamModel) -> None:
-        asyncio.create_task(self.copilot_protocol.send_notification(update))
+        # Keep a strong reference so the task is not garbage-collected mid-flight,
+        # and surface (rather than swallow) failures from the host's notification hook.
+        task = asyncio.create_task(self.copilot_protocol.send_notification(update))
+        self._notification_tasks.add(task)
+        task.add_done_callback(self._on_notification_done)
+
+    def _on_notification_done(self, task: asyncio.Task[None]) -> None:
+        self._notification_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.warning("send_notification failed: %s", exc)
 
     async def _agent_loop(
         self,

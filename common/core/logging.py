@@ -30,7 +30,7 @@ _send_logfire = _env not in (Environment.LOCAL.value, Environment.TEST.value)
 logfire.configure(
     environment=_environment_label(),
     send_to_logfire=_send_logfire,
-    scrubbing=False,
+    # Keep default scrubbing on so secrets/PII are redacted from spans and logs.
     console=logfire.ConsoleOptions(
         min_log_level="debug",
         span_style="show-parents",
@@ -38,7 +38,8 @@ logfire.configure(
         verbose=True,
     ),
     service_name=_service_name(),
-    inspect_arguments=True,
+    # f-string argument inspection can capture sensitive values; restrict to local/test.
+    inspect_arguments=not _send_logfire,
     distributed_tracing=True,
 )
 

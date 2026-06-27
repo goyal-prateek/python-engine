@@ -37,6 +37,16 @@ from common.app.modules.agents.tools import (
 )
 from common.app.modules.agents.tools.builtin import DELEGATION_BUILTIN_NAMES, builtin_tools
 
+
+def clear_session(session_id: str) -> int:
+    """Release all process-global agent state for a session (spawns + run records).
+
+    Returns the number of entries removed. Call when a session ends to avoid unbounded
+    growth of the in-memory registries. Note: these registries are per-process only.
+    """
+    return clear_spawns_for_session(session_id) + clear_subagent_runs_for_session(session_id)
+
+
 __all__ = [
     "Agent",
     "AgentQuestion",
@@ -57,6 +67,7 @@ __all__ = [
     "get_acting_agent_name",
     "normalize_subagents",
     "cancel_tools",
+    "clear_session",
     "clear_spawns_for_session",
     "clear_subagent_runs_for_session",
     "execute_tools",

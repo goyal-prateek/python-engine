@@ -56,7 +56,7 @@ class MessageHistory:
                 + usage.cache_creation_input_tokens
             )
             out = usage.output_tokens
-            current_turn_in = total_in - self.total_tokens
+            current_turn_in = max(0, total_in - self.total_tokens)
             self.message_tokens.append((current_turn_in, out))
             self.total_tokens += current_turn_in + out
 
@@ -90,5 +90,7 @@ class MessageHistory:
         while self.total_tokens > self.context_window_tokens and len(self.messages) > 2:
             self.messages.pop(0)
             if self.message_tokens:
-                self.message_tokens.pop(0)
-            self.total_tokens = max(0, self.total_tokens - 1000)
+                dropped_in, dropped_out = self.message_tokens.pop(0)
+                self.total_tokens = max(0, self.total_tokens - (dropped_in + dropped_out))
+            else:
+                self.total_tokens = 0

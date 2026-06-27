@@ -55,12 +55,10 @@ async def _execute_single_tool(
             if not result.is_error:
                 response.human_in_the_loop = result.break_out_of_loop or tool.human_in_the_loop
         else:
+            # Plain string results are successful by convention; tools signal errors by
+            # returning ToolResult(is_error=True) rather than via a magic "Error:" prefix.
             response.content = str(result)
-            if response.content.startswith("Error:"):
-                response.is_error = True
-                response.human_in_the_loop = False
-            else:
-                response.human_in_the_loop = tool.human_in_the_loop if tool is not None else False
+            response.human_in_the_loop = tool.human_in_the_loop
 
     except TimeoutError:
         timeout_s = tool.timeout if tool is not None else 0

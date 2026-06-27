@@ -12,8 +12,8 @@ from common.app.modules.agents.builtin_prompts import builtin_tool_names
 from common.app.modules.agents.protocol import AgentQuestion
 from common.app.modules.agents.spawnable import get_or_create_spawn
 from common.app.modules.agents.subagent_runs import (
-    is_spawn_busy,
     list_runs_for_parent,
+    spawn_busy_guard,
     start_delegation,
     wait_all,
     wait_any,
@@ -170,17 +170,10 @@ def builtin_tools(agent: Agent) -> list[Tool[Any]]:
             super().__init__(name="run_subagent_sync", input_model=RunSubagentSyncInput)
 
         async def execute(self, input: RunSubagentSyncInput) -> str | ToolResult:
-            if is_spawn_busy(base.session_id, base.name, input.spawn_name):
-                return ToolResult(
-                    content=(
-                        "Error: this spawn already has an async run in progress. "
-                        "Use wait_for_all_subagents / wait_for_any_subagent first."
-                    ),
-                    is_error=True,
-                )
             try:
-                spawn = await get_or_create_spawn(base, input.spawn_name)
-                blocks = await spawn.run_async(input.agent_input)
+                async with spawn_busy_guard(base.session_id, base.name, input.spawn_name):
+                    spawn = await get_or_create_spawn(base, input.spawn_name)
+                    blocks = await spawn.run_async(input.agent_input)
             except ValueError as e:
                 return ToolResult(content=str(e), is_error=True)
             return json.dumps([b.model_dump(exclude_none=True) for b in blocks])
