@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, List, Mapping, TypeVar, cast
+from collections.abc import Mapping
+from typing import Any, TypeVar, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -48,31 +49,20 @@ async def _execute_single_tool(
         else:
             result = await coro
 
-        if isinstance(result, ImageToolResult):
+        if isinstance(result, (ImageToolResult, ToolResult)):
             response.content = result.content
             response.is_error = result.is_error
             if not result.is_error:
-                response.human_in_the_loop = (
-                    result.break_out_of_loop or tool.human_in_the_loop
-                )
-        elif isinstance(result, ToolResult):
-            response.content = result.content
-            response.is_error = result.is_error
-            if not result.is_error:
-                response.human_in_the_loop = (
-                    result.break_out_of_loop or tool.human_in_the_loop
-                )
+                response.human_in_the_loop = result.break_out_of_loop or tool.human_in_the_loop
         else:
             response.content = str(result)
             if response.content.startswith("Error:"):
                 response.is_error = True
                 response.human_in_the_loop = False
             else:
-                response.human_in_the_loop = (
-                    tool.human_in_the_loop if tool is not None else False
-                )
+                response.human_in_the_loop = tool.human_in_the_loop if tool is not None else False
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         timeout_s = tool.timeout if tool is not None else 0
         response.content = f"Tool execution timed out after {timeout_s} seconds."
         response.is_error = True
@@ -87,7 +77,7 @@ async def _execute_single_tool(
             response.is_error = True
         else:
             input_dict = call.input if isinstance(call.input, dict) else {}
-            provided_keys = sorted(str(k) for k in cast(dict[Any, Any], input_dict).keys())
+            provided_keys = sorted(str(k) for k in cast(dict[Any, Any], input_dict))
             required_fields = [
                 f.alias or name
                 for name, f in tool.input_model.model_fields.items()
@@ -101,9 +91,7 @@ async def _execute_single_tool(
                     f"Required: {required_fields}. Missing: {missing}."
                 )
             else:
-                response.content = (
-                    f"Tool '{call.name}' validation failed: {ve}"
-                )
+                response.content = f"Tool '{call.name}' validation failed: {ve}"
             response.is_error = True
     except Exception as e:
         response.content = f"Error executing tool: {e!s}"
@@ -118,14 +106,12 @@ async def execute_tools(
     tool_dict: Mapping[str, Tool[Any]],
     *,
     parallel: bool = True,
-) -> List[ToolResultBlockParamModel]:
+) -> list[ToolResultBlockParamModel]:
     if parallel:
         return list(
-            await asyncio.gather(
-                *[_execute_single_tool(call, tool_dict) for call in tool_calls]
-            )
+            await asyncio.gather(*[_execute_single_tool(call, tool_dict) for call in tool_calls])
         )
-    out: List[ToolResultBlockParamModel] = []
+    out: list[ToolResultBlockParamModel] = []
     for call in tool_calls:
         out.append(await _execute_single_tool(call, tool_dict))
     return out
@@ -159,9 +145,7 @@ async def _cancel_single_tool(
 async def cancel_tools(
     tool_calls: list[ToolUseBlockParamModel],
     tool_dict: Mapping[str, Tool[Any]],
-) -> List[ToolResultBlockParamModel]:
+) -> list[ToolResultBlockParamModel]:
     return list(
-        await asyncio.gather(
-            *[_cancel_single_tool(call, tool_dict) for call in tool_calls]
-        )
+        await asyncio.gather(*[_cancel_single_tool(call, tool_dict) for call in tool_calls])
     )

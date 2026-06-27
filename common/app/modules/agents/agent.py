@@ -5,13 +5,20 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
-from typing import Any, Awaitable, Callable, List, Optional, Union, cast
+from typing import Any, cast
 
 from pydantic import BaseModel, Field
 
+from common.app.modules.agents.builtin_prompts import (
+    builtin_system_prompt_fragment,
+    builtin_tool_names,
+)
+from common.app.modules.agents.execution_context import acting_agent_name
 from common.app.modules.agents.history import MessageHistory
 from common.app.modules.agents.protocol import CopilotProtocol, CopilotStreamSinkBridge
+from common.app.modules.agents.subagent_config import SubagentConfig, normalize_subagents
 from common.app.modules.agents.tools.base import Tool
 from common.app.modules.agents.tools.execute import cancel_tools, execute_tools
 from common.app.modules.llm.agent_completion import (
@@ -47,18 +54,20 @@ class Agent:
         session_id: str,
         copilot_protocol: CopilotProtocol,
         completion: CompletionBackend,
-        tools: Optional[List[Tool[Any]]] = None,
-        model_config: Optional[AgentModelConfig] = None,
-        description: Optional[str] = None,
+        tools: list[Tool[Any]] | None = None,
+        model_config: AgentModelConfig | None = None,
+        description: str | None = None,
         stream: bool = False,
-        on_iteration: Optional[Callable[..., Awaitable[None]]] = None,
+        on_iteration: Callable[..., Awaitable[None]] | None = None,
+        subagents: Mapping[str, SubagentConfig] | Sequence[SubagentConfig] | None = None,
+        enabled_builtin_tools: frozenset[str] | set[str] | None = None,
     ) -> None:
         self.name = name
         self.system = system
         self.session_id = session_id
         self.copilot_protocol = copilot_protocol
         self._completion = completion
-        self.tools: List[Tool[Any]] = list(tools or [])
+        self.tools: list[Tool[Any]] = list(tools or [])
         self.model_config = model_config or AgentModelConfig(
             provider="gemini",
             model="gemini-2.0-flash",
@@ -66,6 +75,17 @@ class Agent:
         self.description = description
         self.stream = stream
         self._on_iteration = on_iteration
+        self.subagents: dict[str, SubagentConfig] = normalize_subagents(subagents)
+        if enabled_builtin_tools is not None:
+            eb = frozenset(enabled_builtin_tools)
+            unknown = eb - builtin_tool_names()
+            if unknown:
+                raise ValueError(
+                    f"Unknown enabled_builtin_tools names: {sorted(unknown)}",
+                )
+            self.enabled_builtin_tools: frozenset[str] | None = eb
+        else:
+            self.enabled_builtin_tools = None
         self._turn_last_stop_reason = ""
         self._bootstrapped = False
         self.history = MessageHistory(
@@ -78,6 +98,24 @@ class Agent:
     def completion_backend(self) -> CompletionBackend:
         return self._completion
 
+    def _llm_system_with_builtin_context(self) -> str:
+        """Prefix ``system`` with guidance for built-in tools present on this agent."""
+        known = builtin_tool_names()
+        names_in_tools = frozenset(t.name for t in self.tools if t.name in known)
+        if not names_in_tools:
+            return self.system
+        if self.enabled_builtin_tools is not None:
+            if len(self.enabled_builtin_tools) == 0:
+                return self.system
+            want = self.enabled_builtin_tools & known
+        else:
+            want = known
+        include = frozenset(names_in_tools & want)
+        fragment = builtin_system_prompt_fragment(include=include)
+        if not fragment:
+            return self.system
+        return f"{fragment}\n\n{self.system}"
+
     async def initialize(self) -> None:
         await self.history.bootstrap_with_sticky()
         self._bootstrapped = True
@@ -85,7 +123,7 @@ class Agent:
     @staticmethod
     def _tool_call_error_fingerprint(
         tool_calls: list[ToolUseBlockParamModel],
-    ) -> Optional[str]:
+    ) -> str | None:
         if not tool_calls:
             return None
         parts: list[str] = []
@@ -100,9 +138,9 @@ class Agent:
     async def _agent_loop(
         self,
         user_input: str,
-        human_in_the_loop_tool_id: Optional[str] = None,
-        extra_content_blocks: Optional[list[Any]] = None,
-    ) -> List[Union[TextBlockParamModel, ToolUseBlockParamModel]]:
+        human_in_the_loop_tool_id: str | None = None,
+        extra_content_blocks: list[Any] | None = None,
+    ) -> list[TextBlockParamModel | ToolUseBlockParamModel]:
         self._turn_last_stop_reason = ""
 
         if not self._bootstrapped:
@@ -117,9 +155,7 @@ class Agent:
             )
 
         if human_in_the_loop_tool_id:
-            await self.history.add_human_in_the_loop_message(
-                human_in_the_loop_tool_id, user_input
-            )
+            await self.history.add_human_in_the_loop_message(human_in_the_loop_tool_id, user_input)
         else:
             blocks: list[Any] = [TextBlockParamModel(type="text", text=user_input)]
             if extra_content_blocks:
@@ -127,13 +163,13 @@ class Agent:
             await self.history.add_message(
                 MessageParamModel(
                     role="user",
-                    content=cast(List[MessageContentBlock], blocks),
+                    content=cast(list[MessageContentBlock], blocks),
                 ),
                 usage=None,
             )
 
         tool_dict: dict[str, Tool[Any]] = {t.name: t for t in self.tools}
-        last_error_fingerprint: Optional[str] = None
+        last_error_fingerprint: str | None = None
         consecutive_identical_errors = 0
 
         while True:
@@ -145,7 +181,7 @@ class Agent:
 
             request = AgentCompletionRequest.from_parts(
                 messages=self.history.format_for_api(),
-                system=self.system,
+                system=self._llm_system_with_builtin_context(),
                 tools=tuple(self.tools),
                 config=self.model_config,
             )
@@ -172,9 +208,7 @@ class Agent:
 
             if response.stop_reason == "max_tokens":
                 tool_calls_in_response = [
-                    b
-                    for b in response.content.content
-                    if isinstance(b, ToolUseBlockParamModel)
+                    b for b in response.content.content if isinstance(b, ToolUseBlockParamModel)
                 ]
                 if tool_calls_in_response:
                     truncation_error = (
@@ -191,14 +225,12 @@ class Agent:
                                 is_error=True,
                             )
                         )
-                        await self.copilot_protocol.on_tool_result(
-                            tc.id, truncation_error, True
-                        )
+                        await self.copilot_protocol.on_tool_result(tc.id, truncation_error, True)
                     await self.history.add_message(
                         MessageParamModel(
                             role="user",
                             content=cast(
-                                List[MessageContentBlock],
+                                list[MessageContentBlock],
                                 err_results
                                 + [
                                     TextBlockParamModel(
@@ -215,9 +247,7 @@ class Agent:
 
             unhandled_messages = await self.copilot_protocol.get_unhandled_messages()
             tool_calls = [
-                b
-                for b in response.content.content
-                if isinstance(b, ToolUseBlockParamModel)
+                b for b in response.content.content if isinstance(b, ToolUseBlockParamModel)
             ]
 
             if tool_calls:
@@ -234,24 +264,15 @@ class Agent:
                     else:
                         consecutive_identical_errors = 1
                         last_error_fingerprint = fp
-                    if (
-                        consecutive_identical_errors
-                        >= self.MAX_CONSECUTIVE_IDENTICAL_ERRORS
-                    ):
+                    if consecutive_identical_errors >= self.MAX_CONSECUTIVE_IDENTICAL_ERRORS:
                         for tr in tool_results:
-                            disp = (
-                                tr.content
-                                if isinstance(tr.content, str)
-                                else str(tr.content)
-                            )
-                            await self.copilot_protocol.on_tool_result(
-                                tr.tool_use_id, disp, True
-                            )
+                            disp = tr.content if isinstance(tr.content, str) else str(tr.content)
+                            await self.copilot_protocol.on_tool_result(tr.tool_use_id, disp, True)
                         await self.history.add_message(
                             MessageParamModel(
                                 role="user",
                                 content=cast(
-                                    List[MessageContentBlock],
+                                    list[MessageContentBlock],
                                     list(tool_results)
                                     + [
                                         TextBlockParamModel(
@@ -282,48 +303,36 @@ class Agent:
                         tool_result.is_error,
                     )
 
-                self._send_notification(
-                    MessageParamModel(role="user", content=list(tool_results))
-                )
+                self._send_notification(MessageParamModel(role="user", content=list(tool_results)))
 
                 new_unhandled = await self.copilot_protocol.get_unhandled_messages()
                 new_bg = await self.copilot_protocol.get_background_context_messages()
-                combined = (
-                    list(tool_results)
-                    + list(new_unhandled)
-                    + list(new_bg)
-                )
+                combined = list(tool_results) + list(new_unhandled) + list(new_bg)
                 await self.history.add_message(
                     MessageParamModel(
                         role="user",
-                        content=cast(List[MessageContentBlock], combined),
+                        content=cast(list[MessageContentBlock], combined),
                     ),
                     usage=None,
                 )
 
                 hitl = any(b.human_in_the_loop for b in tool_results)
                 if hitl or not await self.copilot_protocol.should_continue_loop():
-                    self._turn_last_stop_reason = (
-                        "human_in_the_loop" if hitl else "aborted"
-                    )
+                    self._turn_last_stop_reason = "human_in_the_loop" if hitl else "aborted"
                     return [
                         b
                         for b in response.content.content
-                        if isinstance(
-                            b, (TextBlockParamModel, ToolUseBlockParamModel)
-                        )
+                        if isinstance(b, (TextBlockParamModel, ToolUseBlockParamModel))
                     ]
             else:
-                unhandled_messages = (
-                    await self.copilot_protocol.get_unhandled_messages()
-                )
+                unhandled_messages = await self.copilot_protocol.get_unhandled_messages()
                 bg_ctx = await self.copilot_protocol.get_background_context_messages()
                 extra_msgs = list(unhandled_messages) + list(bg_ctx)
                 if extra_msgs:
                     await self.history.add_message(
                         MessageParamModel(
                             role="user",
-                            content=cast(List[MessageContentBlock], extra_msgs),
+                            content=cast(list[MessageContentBlock], extra_msgs),
                         ),
                         usage=None,
                     )
@@ -340,10 +349,11 @@ class Agent:
     async def run_async(
         self,
         user_input: str,
-        human_in_the_loop_tool_id: Optional[str] = None,
-        extra_content_blocks: Optional[list[Any]] = None,
-    ) -> List[Union[TextBlockParamModel, ToolUseBlockParamModel]]:
+        human_in_the_loop_tool_id: str | None = None,
+        extra_content_blocks: list[Any] | None = None,
+    ) -> list[TextBlockParamModel | ToolUseBlockParamModel]:
         completed_normally = False
+        token = acting_agent_name.set(self.name)
         try:
             await self.copilot_protocol.mark_loop_as_in_progress()
             result = await self._agent_loop(
@@ -354,6 +364,7 @@ class Agent:
             completed_normally = True
             return result
         finally:
+            acting_agent_name.reset(token)
             if completed_normally:
                 await self.copilot_protocol.mark_loop_as_completed()
             else:

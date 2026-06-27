@@ -31,9 +31,7 @@ class GeminiAgentBackend:
         tool_list = [t.to_gemini_tool() for t in request.tools]
         cfg = request.config
         thinking = (
-            ThinkingConfig(
-                include_thoughts=True, thinking_budget=cfg.thinking_budget_tokens
-            )
+            ThinkingConfig(include_thoughts=True, thinking_budget=cfg.thinking_budget_tokens)
             if cfg.thinking_budget_tokens >= 1024
             else ThinkingConfig(include_thoughts=False, thinking_budget=0)
         )

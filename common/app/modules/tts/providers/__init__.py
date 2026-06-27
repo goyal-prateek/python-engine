@@ -1,4 +1,5 @@
-from typing import AsyncIterator, Optional
+from collections.abc import AsyncIterator
+
 from common.app.modules.tts.providers.base import TTSBaseProvider, TTSProviderLiteral
 from common.app.modules.tts.providers.smallest_ai import SmallestAITTSProvider
 
@@ -15,7 +16,7 @@ class TTSProvider:
         cls,
         text: str,
         voice: TTSBaseProvider.TTSVoice,
-        audio_config: Optional[TTSBaseProvider.TTSAudioConfig] = None,
+        audio_config: TTSBaseProvider.TTSAudioConfig | None = None,
         provider: TTSProviderLiteral = "smallest_ai",
     ) -> bytes:
         tts_provider = TTSProvider.get_provider(provider)
@@ -28,7 +29,7 @@ class TTSProvider:
         cls,
         text: str,
         voice: TTSBaseProvider.TTSVoice,
-        audio_config: Optional[TTSBaseProvider.TTSAudioConfig] = None,
+        audio_config: TTSBaseProvider.TTSAudioConfig | None = None,
         provider: TTSProviderLiteral = "smallest_ai",
     ) -> AsyncIterator[bytes]:
         tts_provider = TTSProvider.get_provider(provider)

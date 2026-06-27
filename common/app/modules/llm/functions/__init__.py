@@ -1,17 +1,6 @@
 import inspect
-from typing import (
-    Any,
-    AsyncGenerator,
-    AsyncIterator,
-    Callable,
-    Dict,
-    List,
-    Literal,
-    Optional,
-    Type,
-    Union,
-    overload,
-)
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from typing import Any, Literal, overload
 
 from pydantic import BaseModel, Field
 
@@ -36,20 +25,18 @@ class LLMFunction(BaseModel):
 
     class TransformStep(Step):
         type: Literal["transform"] = "transform"
-        function: Callable[[Any], Dict[str, Any]]
+        function: Callable[[Any], dict[str, Any]]
 
-        def execute(self, step_input: Any) -> Dict[str, Any]:
+        def execute(self, step_input: Any) -> dict[str, Any]:
             return self.function(step_input)
 
     class CompletionStep(Step):
         type: Literal["completion"] = "completion"
         model: str
-        extend_prompt: Optional[
-            Callable[[Any, "LLMFunction.ParamsModel"], List[LLMPromptItem]]
-        ] = None
-        max_tokens: Optional[int] = None
-        temperature: Optional[float] = None
-        agent_model_config: Optional[AgentModelConfig] = Field(
+        extend_prompt: Callable[[Any, "LLMFunction.ParamsModel"], list[LLMPromptItem]] | None = None
+        max_tokens: int | None = None
+        temperature: float | None = None
+        agent_model_config: AgentModelConfig | None = Field(
             default=None,
             description="If set, sent to CompletionRouter as-is; else built from model / max_tokens / temperature with provider 'openai' (OpenRouter).",
         )
@@ -60,9 +47,7 @@ class LLMFunction(BaseModel):
             return AgentModelConfig(
                 provider="openai",
                 model=self.model,
-                max_tokens=self.max_tokens
-                if self.max_tokens is not None
-                else 8192,
+                max_tokens=self.max_tokens if self.max_tokens is not None else 8192,
                 temperature=0.7 if self.temperature is None else self.temperature,
             )
 
@@ -73,7 +58,7 @@ class LLMFunction(BaseModel):
             params: "LLMFunction.ParamsModel",
             shared_clients: SharedLLMClients,
             stream: Literal[False] = False,
-        ) -> Optional[str]: ...
+        ) -> str | None: ...
 
         @overload
         async def execute(
@@ -90,8 +75,8 @@ class LLMFunction(BaseModel):
             params: "LLMFunction.ParamsModel",
             shared_clients: SharedLLMClients,
             stream: bool = False,
-        ) -> Union[Optional[str], AsyncIterator[str]]:
-            prompt: List[LLMPromptItem] = []
+        ) -> str | None | AsyncIterator[str]:
+            prompt: list[LLMPromptItem] = []
             if self.extend_prompt is not None:
                 if inspect.iscoroutinefunction(self.extend_prompt):
                     prompt = await self.extend_prompt(step_input, params)
@@ -115,12 +100,13 @@ class LLMFunction(BaseModel):
             return msg.text_content or None
 
     name: str = Field(..., title="Name", description="Name of the function")
-    steps: List[Union[TransformStep, CompletionStep]] = Field(
-        [], description="Steps to execute"
+    steps: list[TransformStep | CompletionStep] = Field([], description="Steps to execute")
+    params_model: type[ParamsModel] = Field(..., description="Parameters model")
+    output_model: type[OutputModel] | None = Field(default=None, description="Output model")
+    stream: bool = Field(
+        default=False,
+        description="Stream the output - only the last completion step can be streamed",
     )
-    params_model: Type[ParamsModel] = Field(..., description="Parameters model")
-    output_model: Optional[Type[OutputModel]] = Field(default=None, description="Output model")
-    stream: bool = Field(default=False, description="Stream the output - only the last completion step can be streamed")
 
     async def _stream_last_completion(
         self,
@@ -139,18 +125,14 @@ class LLMFunction(BaseModel):
         params: ParamsModel,
         *,
         shared_llm_clients: SharedLLMClients,
-    ) -> Union[OutputModel, Any, AsyncGenerator[str, None]]:
-        intermediate_outputs: List[Any] = []
+    ) -> OutputModel | Any | AsyncGenerator[str, None]:
+        intermediate_outputs: list[Any] = []
         if self.stream and not isinstance(self.steps[-1], LLMFunction.CompletionStep):
-            raise ValueError(
-                "Last step must be a completion step when stream is True"
-            )
+            raise ValueError("Last step must be a completion step when stream is True")
 
         for index, step in enumerate(self.steps):
-            step_output: Optional[Dict[str, Any]] = None
-            step_input = (
-                intermediate_outputs[-1] if len(intermediate_outputs) > 0 else params
-            )
+            step_output: dict[str, Any] | None = None
+            step_input = intermediate_outputs[-1] if len(intermediate_outputs) > 0 else params
 
             if isinstance(step, LLMFunction.TransformStep):
                 step_output = step.execute(step_input)

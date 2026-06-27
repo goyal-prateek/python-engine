@@ -5,18 +5,62 @@ from __future__ import annotations
 import json
 import logging
 from copy import deepcopy
-from typing import Any, Dict, Tuple
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from common.app.modules.agents.agent import Agent
-from common.app.modules.agents.tools.base import Tool
+from common.app.modules.agents.subagent_config import SubagentConfig
+from common.app.modules.agents.tools.base import Tool, ToolResult
 
 logger = logging.getLogger(__name__)
 
-SpawnKey = Tuple[str, str, str]
+SpawnKey = tuple[str, str, str]
 
-SPAWN_REGISTRY: Dict[SpawnKey, Agent] = {}
+SPAWN_REGISTRY: dict[SpawnKey, Agent] = {}
+
+
+async def get_or_create_spawn(parent: Agent, spawn_name: str) -> Agent:
+    """Return named sub-agent for this parent session, creating and bootstrapping if needed."""
+    key: SpawnKey = (parent.session_id, parent.name, spawn_name)
+    if key in SPAWN_REGISTRY:
+        return SPAWN_REGISTRY[key]
+    if not parent.subagents:
+        raise ValueError(
+            "This agent has no subagents configured; spawning is disabled.",
+        )
+    if spawn_name not in parent.subagents:
+        raise ValueError(
+            f"Unknown spawn_name {spawn_name!r}; not in the configured subagent allowlist.",
+        )
+    cfg: SubagentConfig = parent.subagents[spawn_name]
+    system = cfg.system if cfg.system is not None else parent.system
+    tools = list(cfg.tools) if cfg.tools is not None else list(parent.tools)
+    model_cfg = (
+        cfg.agent_model_config
+        if cfg.agent_model_config is not None
+        else parent.model_config.model_copy(deep=True)
+    )
+    description = cfg.description if cfg.description is not None else parent.description
+    proto = cfg.copilot_protocol if cfg.copilot_protocol is not None else parent.copilot_protocol
+    stream = cfg.stream
+    spawn = Agent(
+        name=f"{parent.name}#{spawn_name}",
+        system=system,
+        session_id=parent.session_id,
+        copilot_protocol=proto,
+        completion=parent.completion_backend,
+        tools=tools,
+        model_config=model_cfg,
+        description=description,
+        stream=stream,
+        subagents={},
+        enabled_builtin_tools=parent.enabled_builtin_tools,
+    )
+    await spawn.initialize()
+    SPAWN_REGISTRY[key] = spawn
+    logger.info("Created spawn %s for agent %s", spawn_name, parent.name)
+    return spawn
 
 
 class SpawnableAgentToolInput(BaseModel):
@@ -46,9 +90,10 @@ def clear_spawns_for_session(session_id: str) -> int:
 async def make_agent_spawnable(agent: Agent) -> list[Tool[Any]]:
     if not agent.description:
         raise ValueError(
-            "Agent must have a description to be spawnable "
-            "(pass description=... to Agent())."
+            "Agent must have a description to be spawnable (pass description=... to Agent())."
         )
+    if not agent.subagents:
+        return []
     base = agent
 
     class SpawnableAgentTool(Tool[SpawnableAgentToolInput]):
@@ -57,26 +102,18 @@ async def make_agent_spawnable(agent: Agent) -> list[Tool[Any]]:
             im.__doc__ = base.description or ""
             super().__init__(name=base.name, input_model=im)
 
-        async def execute(self, input: SpawnableAgentToolInput) -> str:
-            spawn_name = input.spawn_name
-            key: SpawnKey = (base.session_id, base.name, spawn_name)
-            if key in SPAWN_REGISTRY:
-                spawn = SPAWN_REGISTRY[key]
-            else:
-                spawn = Agent(
-                    name=f"{base.name}#{spawn_name}",
-                    system=base.system,
-                    session_id=base.session_id,
-                    copilot_protocol=base.copilot_protocol,
-                    completion=base.completion_backend,
-                    tools=list(base.tools),
-                    model_config=base.model_config.model_copy(deep=True),
-                    description=base.description,
-                    stream=False,
+        async def execute(self, input: SpawnableAgentToolInput) -> str | ToolResult:
+            from common.app.modules.agents.subagent_runs import is_spawn_busy
+
+            if is_spawn_busy(base.session_id, base.name, input.spawn_name):
+                return ToolResult(
+                    content=(
+                        "Error: this spawn already has an async run in progress "
+                        "(delegate_to_subagent). Use wait_for_* or list_subagent_runs first."
+                    ),
+                    is_error=True,
                 )
-                await spawn.initialize()
-                SPAWN_REGISTRY[key] = spawn
-                logger.info("Created spawn %s for agent %s", spawn_name, base.name)
+            spawn = await get_or_create_spawn(base, input.spawn_name)
             blocks = await spawn.run_async(input.agent_input)
             return json.dumps([b.model_dump(exclude_none=True) for b in blocks])
 

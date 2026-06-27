@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import asdict, dataclass
-from typing import Dict, Type, Union
 
 from common.core.common_settings import CommonServiceSettings, common_settings_from_env
 from common.core.config import configure
@@ -34,12 +33,12 @@ class WwwProductionConfig(CommonServiceSettings):
     ENVIRONMENT: str = "production"
 
 
-def get_config() -> Union[WwwLocalConfig, WwwDevelopmentConfig, WwwProductionConfig]:
+def get_config() -> WwwLocalConfig | WwwDevelopmentConfig | WwwProductionConfig:
     base = common_settings_from_env()
     env = str(os.getenv("ENVIRONMENT", "local"))
     if "local" in env:
         env = "local"
-    mapping: Dict[str, Type[WwwLocalConfig | WwwDevelopmentConfig | WwwProductionConfig]] = {
+    mapping: dict[str, type[WwwLocalConfig | WwwDevelopmentConfig | WwwProductionConfig]] = {
         "local": WwwLocalConfig,
         "development": WwwDevelopmentConfig,
         "production": WwwProductionConfig,
@@ -51,7 +50,7 @@ def get_config() -> Union[WwwLocalConfig, WwwDevelopmentConfig, WwwProductionCon
 config = get_config()
 configure(config)
 
-Config = Union[WwwLocalConfig, WwwDevelopmentConfig, WwwProductionConfig]
+Config = WwwLocalConfig | WwwDevelopmentConfig | WwwProductionConfig
 
 __all__ = [
     "Config",

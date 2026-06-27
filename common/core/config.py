@@ -7,11 +7,9 @@ to `common_settings_from_env()` so standalone scripts keep working.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from common.core.common_settings import CommonServiceSettings, common_settings_from_env
 
-_active: Optional[CommonServiceSettings] = None
+_active: CommonServiceSettings | None = None
 
 
 def configure(settings: CommonServiceSettings) -> None:

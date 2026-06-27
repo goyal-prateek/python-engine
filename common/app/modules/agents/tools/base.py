@@ -4,13 +4,21 @@ from __future__ import annotations
 
 import textwrap
 from abc import ABC, abstractmethod
-from typing import Generic, List, Type, TypeVar, Union
+from typing import Generic, TypeVar
 
 from google.genai.types import (
-    JSONSchema as GeminiJSONSchema,
     FunctionDeclaration as GeminiFunctionDeclaration,
+)
+from google.genai.types import (
+    JSONSchema as GeminiJSONSchema,
+)
+from google.genai.types import (
     Schema as GeminiSchema,
+)
+from google.genai.types import (
     Tool as GeminiTool,
+)
+from google.genai.types import (
     Type as GeminiType,
 )
 from openai.types.chat import ChatCompletionToolParam
@@ -29,14 +37,14 @@ class ToolResult(BaseModel):
 
 
 class ImageToolResult(BaseModel):
-    content: List[ToolResultContentBlock]
+    content: list[ToolResultContentBlock]
     is_error: bool = False
     break_out_of_loop: bool = False
 
 
 class Tool(ABC, Generic[BaseModelT]):
     name: str
-    input_model: Type[BaseModelT]
+    input_model: type[BaseModelT]
     human_in_the_loop: bool = False
     timeout: int = 30
     _current_tool_id: str | None = None
@@ -44,7 +52,7 @@ class Tool(ABC, Generic[BaseModelT]):
     def __init__(
         self,
         name: str,
-        input_model: Type[BaseModelT],
+        input_model: type[BaseModelT],
         *,
         human_in_the_loop: bool = False,
         timeout: int | None = 30,
@@ -87,9 +95,7 @@ class Tool(ABC, Generic[BaseModelT]):
         )
 
     @abstractmethod
-    async def execute(
-        self, input: BaseModelT
-    ) -> Union[str, ToolResult, ImageToolResult]:
+    async def execute(self, input: BaseModelT) -> str | ToolResult | ImageToolResult:
         raise NotImplementedError
 
     async def cancel(self, input: BaseModelT) -> str:

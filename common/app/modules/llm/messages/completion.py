@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Literal, Optional
+from typing import Literal
 
 from google.genai import types as gemini_types
 from openai.types.chat import ChatCompletion
@@ -65,18 +65,10 @@ def _openai_usage_nested_int(usage: object, parent_key: str, child_key: str) -> 
     """Read nested usage fields; parent may be a typed object or dict."""
     if usage is None:
         return 0
-    parent = (
-        usage.get(parent_key)
-        if isinstance(usage, dict)
-        else getattr(usage, parent_key, None)
-    )
+    parent = usage.get(parent_key) if isinstance(usage, dict) else getattr(usage, parent_key, None)
     if parent is None:
         return 0
-    child = (
-        parent.get(child_key)
-        if isinstance(parent, dict)
-        else getattr(parent, child_key, None)
-    )
+    child = parent.get(child_key) if isinstance(parent, dict) else getattr(parent, child_key, None)
     if child is None:
         return 0
     try:
@@ -93,7 +85,7 @@ class CompletionMessageModel(BaseModel):
     model: str
     usage: Usage
     provider: Literal["openai", "anthropic", "gemini"]
-    stop_reason: Optional[StopReason] = None
+    stop_reason: StopReason | None = None
 
     @property
     def text_content(self) -> str:
@@ -120,9 +112,7 @@ class CompletionMessageModel(BaseModel):
                     )
                 )
         if msg.content is not None:
-            completion_content.content.append(
-                TextBlockParamModel(type="text", text=msg.content)
-            )
+            completion_content.content.append(TextBlockParamModel(type="text", text=msg.content))
         if msg.tool_calls is not None:
             for tool_call in msg.tool_calls:
                 args = _parse_openai_tool_arguments(tool_call.function.arguments)
@@ -151,7 +141,7 @@ class CompletionMessageModel(BaseModel):
             )
 
         finish_reason = choice.finish_reason
-        stop_reason: Optional[StopReason] = None
+        stop_reason: StopReason | None = None
         if finish_reason == "length":
             stop_reason = "max_tokens"
         elif finish_reason in ("tool_calls", "function_call"):
@@ -210,8 +200,7 @@ class CompletionMessageModel(BaseModel):
                         raw_args = fc.args if fc.args is not None else {}
                         message_param_model.content.append(
                             ToolUseBlockParamModel(
-                                id=fc.id
-                                or f"func_{fc.name or 'unknown'}_{uuid.uuid4().hex[:8]}",
+                                id=fc.id or f"func_{fc.name or 'unknown'}_{uuid.uuid4().hex[:8]}",
                                 input=dict(raw_args) if raw_args else {},
                                 name=fc.name or "",
                                 type="tool_use",
@@ -253,7 +242,7 @@ class CompletionMessageModel(BaseModel):
         }
         _MALFORMED_TOOL = {"MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL"}
 
-        gemini_stop: Optional[StopReason] = None
+        gemini_stop: StopReason | None = None
         if message.candidates and message.candidates[0].finish_reason:
             finish_r = message.candidates[0].finish_reason
             name = finish_r.name if hasattr(finish_r, "name") else str(finish_r)

@@ -9,4 +9,3 @@ if __name__ == "__main__":
         port=config.PORT,
         reload=config.HOT_RELOAD,
     )
-

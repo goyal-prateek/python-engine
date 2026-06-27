@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from common.app.modules.llm.messages import (
     ImageBlockParamModel,
@@ -15,13 +15,27 @@ from common.app.modules.llm.messages import (
 
 
 class AgentQuestion(BaseModel):
-    """Minimal question shape for ask-user flows (extend in product code)."""
+    """Question for ask-user HITL flows."""
 
     id: str = Field(..., description="Stable question id")
     prompt: str = Field(..., description="Text shown to the user")
+    kind: Literal["text", "single_select", "multi_select"] = Field(
+        default="text",
+        description="text = freeform; select kinds require options",
+    )
+    options: list[str] = Field(
+        default_factory=list,
+        description="Choices for single_select / multi_select",
+    )
+
+    @model_validator(mode="after")
+    def _options_when_select(self) -> AgentQuestion:
+        if self.kind != "text" and len(self.options) < 1:
+            raise ValueError("single_select and multi_select require at least one option")
+        return self
 
 
-ConversationInjectBlock = Union[TextBlockParamModel, ImageBlockParamModel]
+ConversationInjectBlock = TextBlockParamModel | ImageBlockParamModel
 
 
 class CopilotProtocol(ABC):
@@ -46,15 +60,15 @@ class CopilotProtocol(ABC):
         """Fire-and-forget notification to the host (logging, websockets, etc.)."""
 
     @abstractmethod
-    async def get_unhandled_messages(self) -> List[ConversationInjectBlock]:
+    async def get_unhandled_messages(self) -> list[ConversationInjectBlock]:
         """Interrupt messages that may cancel in-flight tool batches."""
 
-    async def get_background_context_messages(self) -> List[ConversationInjectBlock]:
+    async def get_background_context_messages(self) -> list[ConversationInjectBlock]:
         """Passive context injected at safe checkpoints (never cancels tools)."""
         return []
 
     @abstractmethod
-    async def get_sticky_context(self) -> Union[str, List[TextBlockParamModel]]:
+    async def get_sticky_context(self) -> str | list[TextBlockParamModel]:
         """Optional sticky prefix merged into history."""
 
     def get_last_stream_event_at(self) -> float:
@@ -81,9 +95,7 @@ class CopilotProtocol(ABC):
     async def on_tool_use_complete(self, tool_name: str, tool_id: str) -> None:
         pass
 
-    async def on_tool_result(
-        self, tool_id: str, result: str, is_error: bool = False
-    ) -> None:
+    async def on_tool_result(self, tool_id: str, result: str, is_error: bool = False) -> None:
         pass
 
     async def on_stream_start(self) -> None:
@@ -95,9 +107,7 @@ class CopilotProtocol(ABC):
     async def on_compaction_start(self, compaction_id: str) -> None:
         pass
 
-    async def on_compaction_complete(
-        self, compaction_id: str, success: bool, summary: str
-    ) -> None:
+    async def on_compaction_complete(self, compaction_id: str, success: bool, summary: str) -> None:
         pass
 
     async def on_context_usage(self, used_tokens: int, total_tokens: int) -> None:
@@ -106,9 +116,20 @@ class CopilotProtocol(ABC):
     async def on_question_request(
         self,
         tool_id: str,
-        questions: List[AgentQuestion],
-        context: Optional[str] = None,
+        questions: list[AgentQuestion],
+        context: str | None = None,
     ) -> None:
+        pass
+
+    async def on_permission_request(
+        self,
+        tool_id: str,
+        title: str,
+        body: str,
+        context: str | None = None,
+    ) -> None:
+        """Host shows allow/cancel (optional custom message); resume via HITL tool result."""
+
         pass
 
 
@@ -154,8 +175,8 @@ class NullCopilotProtocol(CopilotProtocol):
     async def send_notification(self, update: MessageParamModel) -> None:
         return None
 
-    async def get_unhandled_messages(self) -> List[ConversationInjectBlock]:
+    async def get_unhandled_messages(self) -> list[ConversationInjectBlock]:
         return []
 
-    async def get_sticky_context(self) -> Union[str, List[TextBlockParamModel]]:
+    async def get_sticky_context(self) -> str | list[TextBlockParamModel]:
         return ""

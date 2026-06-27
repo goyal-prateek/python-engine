@@ -1,5 +1,6 @@
-from typing import AsyncGenerator, Literal, Tuple
 import uuid
+from collections.abc import AsyncGenerator
+from typing import Literal
 
 from apps.www.app.models.api.requests.story import GenerateStoryRequest
 from common.app.modules.llm.clients import SharedLLMClients
@@ -7,7 +8,6 @@ from common.app.modules.llm.functions.story.generate.llm_component import (
     generate_story_llm_component,
 )
 from common.app.modules.llm.functions.story.models import (
-    GenerateStoryOutputModel,
     GenerateStoryParamsModel,
 )
 from common.app.modules.tts.providers import TTSProvider
@@ -23,7 +23,7 @@ class StoryService:
         data: GenerateStoryRequest,
         *,
         shared_llm_clients: SharedLLMClients,
-    ) -> Tuple[str, str]:
+    ) -> tuple[str, str]:
         story_text = ""
         llm_execution = await generate_story_llm_component.run(
             params=GenerateStoryParamsModel(
@@ -76,7 +76,7 @@ class StoryService:
         data: GenerateStoryRequest,
         *,
         shared_llm_clients: SharedLLMClients,
-    ) -> AsyncGenerator[Tuple[str, str], None]:
+    ) -> AsyncGenerator[tuple[str, str], None]:
         story_text = ""
         llm_execution = await generate_story_llm_component.run(
             params=GenerateStoryParamsModel(
@@ -97,7 +97,7 @@ class StoryService:
             if "\n" in generated_story:
                 line_to_send, generated_story = generated_story.split("\n", 1)
                 yield ("story_text_append", line_to_send)
-            
+
         for line_to_send in generated_story.split("\n"):
             yield ("story_text_append", line_to_send)
 

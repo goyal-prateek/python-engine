@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import List, Literal, Optional, Sequence, Union
+from collections.abc import Sequence
+from typing import Literal
 
 from google.genai import types as gemini_types
 from openai.types.chat import (
@@ -22,6 +23,15 @@ from pydantic import BaseModel, Field
 from common.app.modules.llm.promtps import LLMPromptItem
 
 
+def _assistant_text_parts_to_openai_content(
+    parts: list[ChatCompletionContentPartTextParam],
+) -> str | None:
+    """OpenAI assistant messages use a single string for `content`, not a parts list."""
+    if not parts:
+        return None
+    return "\n\n".join(p["text"] for p in parts)
+
+
 class ToolResultTextBlock(BaseModel):
     type: Literal["text"] = "text"
     text: str
@@ -36,13 +46,13 @@ class ToolResultImageBlock(BaseModel):
     source: URLSource
 
 
-ToolResultContentBlock = Union[ToolResultTextBlock, ToolResultImageBlock]
+ToolResultContentBlock = ToolResultTextBlock | ToolResultImageBlock
 
 
 class ToolResultBlockParamModel(BaseModel):
     tool_use_id: str
     type: Literal["tool_result"] = "tool_result"
-    content: Union[str, List[ToolResultContentBlock]]
+    content: str | list[ToolResultContentBlock]
     is_error: bool
     human_in_the_loop: bool = False
     tool_name: str
@@ -68,7 +78,7 @@ class ToolResultBlockParamModel(BaseModel):
 class TextBlockParamModel(BaseModel):
     type: Literal["text"] = "text"
     text: str
-    thinking_signature: Optional[bytes] = Field(default=None)
+    thinking_signature: bytes | None = Field(default=None)
 
     def openai_type(self) -> ChatCompletionContentPartTextParam:
         return ChatCompletionContentPartTextParam(type="text", text=self.text)
@@ -107,14 +117,10 @@ class ToolUseBlockParamModel(BaseModel):
     input: object
     name: str
     type: Literal["tool_use"] = "tool_use"
-    thinking_signature: Optional[bytes] = Field(default=None)
+    thinking_signature: bytes | None = Field(default=None)
 
     def openai_type(self) -> ChatCompletionMessageToolCallParam:
-        args: str
-        if isinstance(self.input, str):
-            args = self.input
-        else:
-            args = json.dumps(self.input)
+        args = self.input if isinstance(self.input, str) else json.dumps(self.input)
         return ChatCompletionMessageToolCallParam(
             id=self.id,
             function=Function(name=self.name, arguments=args),
@@ -128,28 +134,26 @@ class ThinkingBlockParamModel(BaseModel):
     signature: str
 
 
-MessageContentBlock = Union[
-    TextBlockParamModel,
-    ImageBlockParamModel,
-    ToolUseBlockParamModel,
-    ToolResultBlockParamModel,
-    ThinkingBlockParamModel,
-]
+MessageContentBlock = (
+    TextBlockParamModel
+    | ImageBlockParamModel
+    | ToolUseBlockParamModel
+    | ToolResultBlockParamModel
+    | ThinkingBlockParamModel
+)
 
 
 class MessageParamModel(BaseModel):
     role: Literal["user", "assistant"]
-    content: List[MessageContentBlock]
+    content: list[MessageContentBlock]
 
-    def to_openai_message(self) -> List[ChatCompletionMessageParam]:
-        openai_messages: List[ChatCompletionMessageParam] = []
+    def to_openai_message(self) -> list[ChatCompletionMessageParam]:
+        openai_messages: list[ChatCompletionMessageParam] = []
         if self.role == "user":
-            user_parts: List[ChatCompletionContentPartParam] = []
-            tool_results: List[ChatCompletionToolMessageParam] = []
+            user_parts: list[ChatCompletionContentPartParam] = []
+            tool_results: list[ChatCompletionToolMessageParam] = []
             for block in self.content:
-                if isinstance(block, TextBlockParamModel):
-                    user_parts.append(block.openai_type())
-                elif isinstance(block, ImageBlockParamModel):
+                if isinstance(block, TextBlockParamModel | ImageBlockParamModel):
                     user_parts.append(block.openai_type())
                 elif isinstance(block, ToolResultBlockParamModel):
                     tool_results.append(block.openai_type())
@@ -160,8 +164,8 @@ class MessageParamModel(BaseModel):
                     ChatCompletionUserMessageParam(role="user", content=user_parts)
                 )
         elif self.role == "assistant":
-            assistant_text_parts: List[ChatCompletionContentPartTextParam] = []
-            tool_calls: List[ChatCompletionMessageToolCallParam] = []
+            assistant_text_parts: list[ChatCompletionContentPartTextParam] = []
+            tool_calls: list[ChatCompletionMessageToolCallParam] = []
             for block in self.content:
                 if isinstance(block, TextBlockParamModel):
                     assistant_text_parts.append(
@@ -169,18 +173,17 @@ class MessageParamModel(BaseModel):
                     )
                 elif isinstance(block, ThinkingBlockParamModel):
                     assistant_text_parts.append(
-                        ChatCompletionContentPartTextParam(
-                            type="text", text=block.thinking
-                        )
+                        ChatCompletionContentPartTextParam(type="text", text=block.thinking)
                     )
                 elif isinstance(block, ToolUseBlockParamModel):
                     tool_calls.append(block.openai_type())
             if assistant_text_parts or tool_calls:
+                content = _assistant_text_parts_to_openai_content(assistant_text_parts)
                 if tool_calls:
                     openai_messages.append(
                         ChatCompletionAssistantMessageParam(
                             role="assistant",
-                            content=assistant_text_parts or None,
+                            content=content,
                             tool_calls=tool_calls,
                         )
                     )
@@ -188,13 +191,13 @@ class MessageParamModel(BaseModel):
                     openai_messages.append(
                         ChatCompletionAssistantMessageParam(
                             role="assistant",
-                            content=assistant_text_parts or None,
+                            content=content,
                         )
                     )
         return openai_messages
 
     def to_gemini_message(self) -> gemini_types.Content:
-        parts: List[gemini_types.Part] = []
+        parts: list[gemini_types.Part] = []
         for block in self.content:
             if isinstance(block, TextBlockParamModel):
                 p = gemini_types.Part(text=block.text)
@@ -218,8 +221,7 @@ class MessageParamModel(BaseModel):
                     text_payload = block.content
                 else:
                     text_payload = "\n".join(
-                        b.text if isinstance(b, ToolResultTextBlock) else ""
-                        for b in block.content
+                        b.text if isinstance(b, ToolResultTextBlock) else "" for b in block.content
                     )
                 parts.append(
                     gemini_types.Part(
@@ -233,9 +235,7 @@ class MessageParamModel(BaseModel):
                     )
                 )
             elif isinstance(block, ThinkingBlockParamModel):
-                parts.append(
-                    gemini_types.Part(thought=True, text=block.thinking)
-                )
+                parts.append(gemini_types.Part(thought=True, text=block.thinking))
             elif isinstance(block, ImageBlockParamModel):
                 parts.append(
                     gemini_types.Part(
@@ -250,15 +250,15 @@ class MessageParamModel(BaseModel):
 
 
 def flatten_messages_to_openai(
-    messages: List[MessageParamModel],
-) -> List[ChatCompletionMessageParam]:
-    out: List[ChatCompletionMessageParam] = []
+    messages: list[MessageParamModel],
+) -> list[ChatCompletionMessageParam]:
+    out: list[ChatCompletionMessageParam] = []
     for m in messages:
         out.extend(m.to_openai_message())
     return out
 
 
-def messages_from_llm_prompt_items(items: Sequence[LLMPromptItem]) -> List[MessageParamModel]:
+def messages_from_llm_prompt_items(items: Sequence[LLMPromptItem]) -> list[MessageParamModel]:
     """Map stringy LLMPromptItem rows to canonical MessageParamModel (single text block each)."""
     return [
         MessageParamModel(

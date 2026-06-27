@@ -48,9 +48,7 @@ async def complete_llm_prompt_items(
     config: AgentModelConfig,
 ) -> CompletionMessageModel:
     router = CompletionRouter(clients)
-    request = AgentCompletionRequest.from_llm_prompt_items(
-        prompt, system=system, config=config
-    )
+    request = AgentCompletionRequest.from_llm_prompt_items(prompt, system=system, config=config)
     return await router.complete(request)
 
 
@@ -69,9 +67,7 @@ async def stream_llm_prompt_text_chunks(
     queue: asyncio.Queue[str | None] = asyncio.Queue()
     sink: AgentStreamSink = _QueuedTextStreamSink(queue)
     router = CompletionRouter(clients)
-    request = AgentCompletionRequest.from_llm_prompt_items(
-        prompt, system=system, config=config
-    )
+    request = AgentCompletionRequest.from_llm_prompt_items(prompt, system=system, config=config)
 
     async def run_completion() -> None:
         try:

@@ -1,15 +1,17 @@
+from typing import Any
+
 from aiobotocore.session import get_session
 
 from common.core.config import config
 
 
 class AsyncS3Client:
-    def __init__(self):
+    def __init__(self) -> None:
         self.region_name = config.AWS_REGION
         self.session = get_session()
-        self.client = None
+        self.client: Any | None = None
 
-    async def _get_client(self):
+    async def _get_client(self) -> Any:
         if self.client is None:
             self.client = await self.session.create_client(
                 "s3",
@@ -28,9 +30,7 @@ class AsyncS3Client:
             **kwargs,
         )
 
-    async def generate_presigned_url(
-        self, ClientMethod, Params, ExpiresIn=3600, HttpMethod="GET"
-    ):
+    async def generate_presigned_url(self, ClientMethod, Params, ExpiresIn=3600, HttpMethod="GET"):
         client = await self._get_client()
         return await client.generate_presigned_url(
             ClientMethod=ClientMethod,

@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, List, Literal, Sequence
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from common.app.modules.llm.agent_completion.tool_protocol import ToolSpec
 from common.app.modules.llm.messages import MessageParamModel, messages_from_llm_prompt_items
 from common.app.modules.llm.promtps import LLMPromptItem
-
 
 AgentProvider = Literal["gemini", "openai", "anthropic"]
 
@@ -25,7 +25,7 @@ class AgentModelConfig(BaseModel):
     context_window_tokens: int = 1_000_000
     thinking_budget_tokens: int = 0
     preferred_key_cache_id: str = "default"
-    fallback_models: List[AgentModelConfig] = Field(default_factory=list)
+    fallback_models: list[AgentModelConfig] = Field(default_factory=list)
     #: Merged into OpenAI `extra_body` for OpenRouter (e.g. `{"reasoning": {"max_tokens": 4096}}`).
     openrouter_extra_body: dict[str, Any] = Field(default_factory=dict)
 
